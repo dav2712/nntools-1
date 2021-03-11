@@ -1,0 +1,27 @@
+#!/bin/bash
+scriptpath="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+source $scriptpath/main
+
+function validateaddress ()
+{
+    ismine=$($komodocli $2 validateaddress $1 | jq .ismine)
+    if [[ ! -z $2 ]]; then
+        echo [$2] $ismine
+    else
+        echo [KMD] $ismine
+    fi
+}
+
+validateaddress $nn_address
+
+if (( thirdpartycoins < 1 )); then
+    for coins in "${coinlist[@]}"; do
+        coin=($coins)
+        if [[ ! ${ignoreacs[*]} =~ ${coin[0]} ]]; then
+            validateaddress $nn_address -ac_name=${coin[0]}
+        fi
+    done
+    # validateaddress $nn_address -ac_name=VRSC
+else
+    validateaddress $nn_address -ac_name=VRSC
+fi

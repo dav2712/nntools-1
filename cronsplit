@@ -1,0 +1,126 @@
+#!/bin/bash
+#
+# Split funds cron job
+#
+# Suggest setting up 2 crontabs, 1 for komodo and assetchains and the other hourly for longer potential blocktimes
+#
+# crontab -e
+# */15 * * * * /home/komodo/nntools/cronsplit
+# 1 * * * * /home/komodo/nntools/cronsplit long
+#
+# @author webworker01
+#
+scriptpath="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+source $scriptpath/main
+
+utxoamt=0.00010000
+splitamount=10000
+
+skipshort=('DPOW')
+skiplong=('DPOW')
+
+doSplit() {
+    local coin=$1
+
+    acutxo=$($komodocli -ac_name=${coin} listunspent | jq --arg amt "$utxoamt" '[.[] | select(.amount==($amt|tonumber))] | length')
+
+    if (( acutxo < acutxoqty )); then
+        if [[ ! ${sproutcoins[*]} =~ ${coin} ]]; then
+            echo "${coin} utxos sapling: $acutxo"
+            splitter=$($scriptpath/splitfunds ${coin} $acutxoqty)
+        else
+            echo "${coin} utxos sprout: $acutxo"
+            splitter=$($scriptpath/splitfunds ${coin} $acutxoqty 0)
+        fi
+        log "cronsplit" "${coin} - utxos: $acutxo - txid: $splitter"
+    fi
+}
+
+#no params in cli indicates just the short list of kmd specific coins
+if [[ -z $1 ]]; then
+    kmdutxos=$($komodocli listunspent | jq --arg amt "$utxoamt" '[.[] | select(.amount==($amt|tonumber))] | length')
+    if (( kmdutxos < kmdutxoqty )); then
+        echo "KMD utxos: $kmdutxos"
+
+        splitter=$($scriptpath/splitfunds KMD $kmdutxoqty)
+
+        log "cronsplit" "KMD - utxos: $kmdutxos - $splitter"
+    fi
+
+    if (( thirdpartycoins < 1 )); then
+        for coins in "${coinlist[@]}"; do
+            coin=($coins)
+
+            if [[ ! ${ignoreacs[*]} =~ ${coin[0]} ]] && [[ ! ${skipshort[*]} =~ ${coin[0]} ]]; then
+                doSplit ${coin[0]}
+            fi
+        done
+    else
+        for coins in "${coinsthird[@]}"; do
+            coin=($coins)
+            if [[ ${komodolike[*]} =~ ${coin[0]} ]]; then
+                doSplit ${coin[0]}
+            fi
+        done
+    fi
+else
+    declare -a othercoins=()
+    if (( thirdpartycoins < 1 )); then
+        for i in ${!coinsfirst[@]}; do
+            othercoins[$i]="${coinsfirst[$i]}"
+        done
+    else
+        for i in ${!coinsthird[@]}; do
+            othercoins[$i]="${coinsthird[$i]}"
+        done
+    fi
+
+    #for now any param indicates to run the long running coins (e.g. btc game chips) run this every hour or something?
+    for coins in "${othercoins[@]}"; do
+        coin=($coins)
+
+        if [[ ${skiplong[*]} =~ ${coin[0]} ]] || [[ ${komodolike[*]} =~ ${coin[0]} ]]; then
+            continue
+        fi
+
+        if [[ ${coin[0]} == "GAME" ]] || [[ ${coin[0]} == "EMC2" ]] || [[ ${coin[0]} == "AYA" ]]; then
+            coinsutxoamount=0.00100000
+            coinsplitamount=100000
+        else
+            coinsutxoamount=$utxoamt
+            coinsplitamount=$splitamount
+        fi
+
+        if [[ ${coin[0]} == "BTC" ]]; then
+            otherutxoqty=$btcutxoqty
+        fi
+
+        eval $(echo coincli=${coin[1]})
+
+        otherutxo=$(${coincli} listunspent | jq --arg amt "$coinsutxoamount" '[.[] | select(.amount==($amt|tonumber))] | length')
+        if (( otherutxo < otherutxoqty )); then
+            echo "${coin[0]} utxos: $otherutxo"
+            raw_tx=$(curl -s --url "http://127.0.0.1:$iguanaport" --data "{\"coin\":\"${coin[0]}\",\"agent\":\"iguana\",\"method\":\"splitfunds\",\"satoshis\":\"$coinsplitamount\",\"sendflag\":1,\"duplicates\":$otherutxoqty}")
+            raw_tx=$(jq -r .result <<< $raw_tx)
+
+            if [[ ! -z $raw_tx ]]; then
+                if [[ "GLEEC" == ${coin[0]} ]]; then
+                    signed_tx=$(${coincli} signrawtransactionwithwallet ${raw_tx})
+                else
+                    signed_tx=$(${coincli} signrawtransaction ${raw_tx})
+                fi
+                signed_tx=$(jq -r .hex <<< $signed_tx)
+
+                if [[ ! -z $signed_tx ]]; then
+
+                    txid=$(${coincli} sendrawtransaction ${signed_tx})
+
+                    if [[ ! -z $txid ]]; then
+                        log "cronsplit" "${coin[0]} - utxos: ${otherutxo} - ${txid}"
+                    fi
+                fi
+            fi
+        fi
+
+    done
+fi

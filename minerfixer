@@ -1,0 +1,63 @@
+#!/bin/bash
+# blocknotify script to disable mining when notary not eligible for easy mining
+#
+# Add to ~/.komodo/komodo.conf:
+#
+# blocknotify=/home/komodo/nntools/minerfixer %s
+#
+# @author webworker01
+#
+scriptpath="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+source $scriptpath/main
+
+max_no_blocks=192
+
+lastgen=$($komodocli listtransactions "*" 777 | jq '[.[] | select(.generated==true)] | .[-1]')
+if [[ "$lastgen" != "null" ]]; then
+    confirmations=$(jq .confirmations <<< $lastgen)
+    rawconfirmations=$(jq .rawconfirmations <<< $lastgen)
+    lastamount=$(jq .amount <<< $lastgen)
+    lasthash=$(jq -r .blockhash <<< $lastgen)
+    lasttxid=$(jq -r .txid <<< $lastgen)
+    lastheight=$($komodocli getblockheader $lasthash | jq -r .height)
+
+    log "minerfixer" "Last Amt:$lastamount Ht:$lastheight RawConfs:$rawconfirmations Confs:$confirmations" "green" "echo"
+
+    #between 3 and 64 confirmations go into power saving mode
+    if (( (rawconfirmations > 2 && rawconfirmations < 65) )); then
+        eligible=$(( 65 - rawconfirmations ))
+
+        $komodocli setgenerate false
+        if (( rawconfirmations == 3 )); then
+            log "minerfixer" "energy saving mode" "green"
+        else
+            log "minerfixer" "energy saving mode" "green" "echo"
+        fi
+
+    #turn on setgenerate upon eligibility
+    elif (( rawconfirmations == 65 )); then
+        log "minerfixer" "setgenerate true"
+        $komodocli setgenerate true 1
+
+    elif (( rawconfirmations < 3 )); then
+        if (( rawconfirmations == 1 )); then
+            log "minerfixer" "Block Found! Height: $lastheight Amount: $lastamount TxID: $lasttxid" "red"
+        else
+            log "minerfixer" " [[ Block found! ]]" "green" "echo"
+        fi
+
+    # If we're past $max_no_blocks since last block found, double check that mining is enabled.
+    elif (( rawconfirmations > max_no_blocks )); then
+        mining=$($komodocli getmininginfo | jq -r .generate)
+        if [[ "${mining}" == "false" ]]; then
+            log "minerfixer" "Should have been mining but wasn't - ${rawconfirmations} > ${max_no_blocks} - setgenerate true" "red"
+            $komodocli setgenerate true 1
+        fi
+    # No change, just verify mining
+    else
+        log "minerfixer" "mining.." "green" "echo"
+    fi
+else
+    log "minerfixer" "could not get last mined tx! setgenerate true"
+    $komodocli setgenerate true 1
+fi
