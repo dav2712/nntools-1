@@ -33,8 +33,11 @@ checkRepo () {
         KMD|GIN)
             printf "     "
             ;;
-        BLUR)
+        CHIPS)
             printf "   "
+            ;;
+        GAME|EMC2)
+            printf "    "
             ;;
     esac
 }
@@ -55,28 +58,29 @@ timefilter=1563202267
 #season 3 ACs - 2019-07-15 00:00 UTC (kmd block 1443129)
 timefilter2=1563148800
 
-format="%-11s %6s %7s %6s %.20s %8s %7s %5s %6s %6s %6s %8s"
+format="%-11s %6s %7s %6s %.20s %8s %7s %5s %6s %6s %6s"
 
 outputstats ()
 {
     count=0
     totalntrzd=0
+    kmdntrzd=0
     now=$(date +"%H:%M")
 
     printf "\n\n"
-    printf "%-11s %6s %7s %6s %8s %8s %7s %5s %6s %6s %14s\n" "-CHAIN-" "-NOTR-" "-LASTN-" "-UTXO-" "-BAL-" "-BLOX-" "-LASTB-" "-CON-" "-SIZE-" "-TIME-" "-TXID-";
+    printf "%-11s %6s %7s %6s %8s %8s %7s %5s %6s %6s\n" "-CHAIN-" "-NOTR-" "-LASTN-" "-UTXO-" "-BAL-" "-BLOX-" "-LASTB-" "-CON-" "-SIZE-" "-TIME-";
 
     kmdinfo=$($komodocli getinfo)
     kmdtxinfo=$($komodocli listtransactions "" $txscanamount)
+    kmdntrzd=$(echo $kmdtxinfo | jq --arg address "$kmdntrzaddr" '[.[] | select(.address==$address and .category=="send")] | length')
     kmdlastntrztime=$(echo $kmdtxinfo | jq -r --arg address "$kmdntrzaddr" '[.[] | select(.address==$address)] | sort_by(.time) | last | "\(.time)"')
-    kmdlasttxid=$(echo $kmdtxinfo | jq -r --arg address "$kmdntrzaddr" '[.[] | select(.address==$address)] | sort_by(.time) | last | "\(.txid)"')
     kmdutxos=$($komodocli listunspent | jq --arg amt "$utxoamt" '[.[] | select(.amount==($amt|tonumber))] | length')
     repo=(${repos[KMD]})
     TIMEFORMAT="%R"
     wallettime=$( (time $komodocli listunspent) 2>&1 > /dev/null )
 
     printf "$format\n" "KMD$(checkRepo KMD ${repo[0]} ${repo[1]})" \
-            "" \
+            "$kmdntrzd" \
             "$(timeSince $kmdlastntrztime)" \
             "$kmdutxos" \
             "$(printf "%8.3f" $(echo $kmdinfo | jq .balance))" \
@@ -85,14 +89,13 @@ outputstats ()
             "$(echo $kmdinfo | jq .connections)" \
             "$(ls -lh ~/.komodo/wallet.dat  | awk '{print $5}')" \
             "$wallettime" \
-            "$(echo $kmdtxinfo | jq '[.[] | select(.generated==true)] | length') mined" \
-            "$kmdlasttxid"
+            "$(echo $kmdtxinfo | jq '[.[] | select(.generated==true)] | length') mined"
 
-    #if (( $thirdpartycoins < 1 )); then
-    #    othercoins="coinsfirst[@]"
-    #else
+    if (( $thirdpartycoins < 1 )); then
+        othercoins="coinsfirst[@]"
+    else
         othercoins="coinsthird[@]"
-    #fi
+    fi
 
     for coins in "${!othercoins}"; do
         coin=($coins)
@@ -104,34 +107,6 @@ outputstats ()
         coinwalletpath="${HOME}/${coin[3]}/wallet.dat"
 
         case ${coin[0]} in
-            BTC)
-                coinsutxoamount=$utxoamt
-                coinsntraddr=$btcntrzaddr
-                seasonfilter=$timefilter
-                ;;
-            GAME)
-                coinsutxoamount=0.00100000
-                coinsntraddr=Gftmt8hgzgNu6f1o85HMPuwTVBMSV2TYSt
-                ;;
-            GIN)
-                coinsutxoamount=$utxoamt
-                coinsntraddr=Gftmt8hgzgNu6f1o85HMPuwTVBMSV2TYSt
-                ;;
-            EMC2)
-                coinsutxoamount=0.00100000
-                coinsntraddr=EfCkxbDFSn4X1VKMzyckyHaXLf4ithTGoM
-                ;;
-            AYA)
-                coinsutxoamount=0.001000000
-                coinsntraddr=Adpj7WENLyRkq9vVknHa82rf3cVHjYvzCG
-                ;;
-            GLEEC)
-                coinsutxoamount=$utxoamt
-                coinsntraddr=FTsxvoops8zGeMbY3pHPwY86bfacGvMdfU
-                if [[ -f "${HOME}/${coin[3]}/wallets/wallet.dat" ]]; then
-                    coinwalletpath="${HOME}/${coin[3]}/wallets/wallet.dat"
-                fi
-                ;;
             *)
                 coinsutxoamount=$utxoamt
                 coinsntraddr=$kmdntrzaddr
@@ -142,7 +117,7 @@ outputstats ()
         coinslastntrztime=$(echo $coinstxinfo | jq -r --arg address "$coinsntraddr" '[.[] | select(.address==$address)] | sort_by(.time) | last | "\(.time)"')
         coinsntrzd=$(echo $coinstxinfo | jq --arg address "$coinsntraddr" --arg timefilter $seasonfilter '[.[] | select(.time>=($timefilter|tonumber) and .address==$address and .category=="send")] | length')
         otherutxo=$($coinexec listunspent | jq --arg amt "$coinsutxoamount" '[.[] | select(.amount==($amt|tonumber))] | length')
-        totalntrzd=$(( $totalntrzd ))
+        totalntrzd=$(( $totalntrzd + $coinsntrzd ))
         repo=(${repos[${coin[0]}]})
         wallettime=$( (time $coinexec listunspent) 2>&1 >/dev/null )
         balance=$($coinexec getbalance)
