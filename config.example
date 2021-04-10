@@ -10,9 +10,11 @@
 
 #Full path to komodo-cli
 komodocli=/usr/local/bin/komodo-cli
+litecoincli=/usr/local/bin/litecoin-cli
 
 #Full path to komodod
 komodod="$HOME/komodo/src/komodod"
+litecoind="$HOME/litecoin/src/litecoind"
 
 #set to 1 if this is the server for third party coins, else leave as 0
 thirdpartycoins=0
@@ -21,9 +23,11 @@ thirdpartycoins=0
 iguanaport=7776
 
 #Enter your notary node compressed address (no quotes)
-nn_address=
+# KMD nn_addres !! For LTC use ltc_address
+nn_address= 
 
 #Enter your notary node compressed pubkey (no quotes)
+# same for KMD && LTC ;)
 nn_pubkey=
 
 #Enter your notary node IPv4 address
@@ -88,3 +92,4 @@ game_address=
 emc2_address=
 gin_address=
 aya_address=
+ltc_address=
