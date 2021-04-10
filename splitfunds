@@ -26,14 +26,21 @@ decodeBase58() {
     while read line; do echo -n ${line/\\/}; done
 }
 
-if [[ ! -z $1 ]] && [[ ${1^^} != "KMD" ]]; then
+if [[ ! -z $1 ]] && [[ ${1^^} != "KMD" ]] && [[ ${1^^} != "LTC" ]]; then
     coin=${1^^}
     asset=" -ac_name=$1"
     txfeeperkb=0
+	coincli=$komodocli
+elif [[ ! -z $1 ]] && [[ ${1^^} = "LTC" ]]; then
+    coin=${1^^} 	# LTC
+    #asset=""
+    #txfeeperkb=$txfeeperkb
+	coincli=$litecoincli
 else
     coin="KMD"
     asset=""
     txfeeperkb=$txfeeperkb
+	coincli=$komodocli
 fi
 
 SPLIT_COUNT=$2
@@ -47,20 +54,33 @@ else
     SPLIT_COUNT=50
 fi
 
-sapling=$(isSapling $coin)
+if [[ $coin = "LTC" ]]; then
+	sapling=0  # Or TODO : functions->isSapling
+else
+	sapling=$(isSapling $coin)
+fi
+
 SPLIT_VALUE=0.0001
 SPLIT_VALUE_SATOSHI=10000
 SPLIT_TOTAL=$(jq -n "$SPLIT_VALUE*$SPLIT_COUNT")
 
-NN_PUBKEY=$($komodocli $asset validateaddress $nn_address | jq -r .pubkey)
-nob58=$(decodeBase58 $nn_address)
+if [[ $coin = "LTC" ]]; then
+	NN_PUBKEY=$($coincli validateaddress $ltc_address | jq -r .pubkey)
+	nob58=$(decodeBase58 $ltc_address)
+else
+	NN_PUBKEY=$($coincli $asset validateaddress $nn_address | jq -r .pubkey)
+	nob58=$(decodeBase58 $nn_address)
+fi
+
 NN_HASH160=$(echo ${nob58:2:-8})
 
 #Get lowest amount and valid utxo to split
-if [[ $coin != "VRSC" ]]; then
-    utxo=$($komodocli $asset listunspent | jq -r --arg minsize $SPLIT_TOTAL '[.[] | select(.amount>($minsize|tonumber) and .generated==false and .rawconfirmations>0)] | sort_by(.amount)[0]')
+if [[ $coin = "LTC" ]]; then
+	utxo=$($coincli listunspent | jq -r --arg minsize $SPLIT_TOTAL '[.[] | select(.amount>($minsize|tonumber) and .spendable==true )] | sort_by(.amount)[0]')	# or .safe==true ?
+elif [[ $coin != "VRSC" ]]; then
+    utxo=$($coincli $asset listunspent | jq -r --arg minsize $SPLIT_TOTAL '[.[] | select(.amount>($minsize|tonumber) and .generated==false and .rawconfirmations>0)] | sort_by(.amount)[0]')
 else
-    utxo=$($komodocli $asset listunspent | jq -r --arg minsize $SPLIT_TOTAL '[.[] | select(.amount>($minsize|tonumber) and .generated==false and .confirmations>0)] | sort_by(.amount)[0]')
+    utxo=$($coincli $asset listunspent | jq -r --arg minsize $SPLIT_TOTAL '[.[] | select(.amount>($minsize|tonumber) and .generated==false and .confirmations>0)] | sort_by(.amount)[0]')
 fi
 
 if [[ $utxo != "null" ]]; then
@@ -99,6 +119,7 @@ if [[ $utxo != "null" ]]; then
 
     rawtx=$rawtx"1976a914"$NN_HASH160"88ac" # len OP_DUP OP_HASH160 len hash OP_EQUALVERIFY OP_CHECKSIG
 
+
     # nlocktime=$(printf "%08x" $(date +%s) | dd conv=swab 2> /dev/null | rev)
     nlocktime="00000000"
     rawtx=$rawtx$nlocktime
@@ -106,12 +127,11 @@ if [[ $utxo != "null" ]]; then
     if (( sapling > 0 )); then
         rawtx=$rawtx"000000000000000000000000000000" # sapling end of tx
     fi
-
-    signedtx=$($komodocli $asset signrawtransaction $rawtx | jq -r '.hex')
-
+    
+	signedtx=$($coincli $asset signrawtransaction $rawtx | jq -r '.hex')
+      
     if [[ ! -z $signedtx ]]; then
-        txid=$($komodocli $asset sendrawtransaction $signedtx)
-        echo $txid
+        txid=$($coincli $asset sendrawtransaction $signedtx)
     else
         echo "Error! Failed signing tx :(("
     fi
