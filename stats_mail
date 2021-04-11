@@ -9,6 +9,12 @@ source $scriptpath/main
 color_red=$'\033[0;31m'
 color_reset=$'\033[0m'
 
+email_content=
+email_min_balance=0.02	# 
+email_max_nn=3600		# in seconds
+email_min_utxo=5		# kmdutxoqty || acutxoqty || btcutxoqty || otherutxoqty
+
+
 checkRepo () {
     if [ -z $1 ] || [ -z $2 ] || [ -z $3 ]; then
         return
@@ -72,6 +78,12 @@ outputstats ()
     printf "%-11s %6s %7s %6s %8s %8s %7s %5s %6s %6s %14s\n" "-CHAIN-" "-NOTR-" "-LASTN-" "-UTXO-" "-BAL-" "-BLOX-" "-LASTB-" "-CON-" "-SIZE-" "-TIME-" "-TXID-";
 
     kmdinfo=$($komodocli getinfo)
+	
+	if [ -z "$kmdinfo" ]; then
+		email_content+="KMD - is not responding !!\n"
+		return
+	fi
+	
     kmdtxinfo=$($komodocli listtransactions "" $txscanamount)
     kmdntrzd=$(echo $kmdtxinfo | jq -r --arg address "$kmdntrzaddr" '[.[] | select(.address==$address and .category=="send")] | length')
     kmdlastntrztime=$(echo $kmdtxinfo | jq -r --arg address "$kmdntrzaddr" '[.[] | select(.address==$address)] | sort_by(.time) | last | "\(.time)"')
@@ -80,6 +92,19 @@ outputstats ()
     TIMEFORMAT="%R"
     wallettime=$( (time $komodocli listunspent) 2>&1 > /dev/null )
     kmdlasttxid=$(echo $kmdtxinfo | jq -r --arg address "$kmdntrzaddr" '[.[] | select(.address==$address)] | sort_by(.time) | last | "\(.txid)"')
+
+	#if (( $(bc <<< "$($komodocli getbalance) < 20.02") )); then
+	if (( $(bc <<< "$($komodocli getbalance) < $email_min_balance") )); then
+		email_content+="KMD - Low Balance : $(echo $kmdinfo | jq .balance)\n"
+	fi
+	
+	if (( kmdutxos < email_min_utxo )); then
+		email_content+="KMD - Low UTXO : $kmdutxos\n"
+	fi 
+	
+	if (( $(($(date +%s)-$kmdlastntrztime)) > email_max_nn )); then
+		email_content+="KMD - Last NN : $(timeSince $kmdlastntrztime)\n"
+	fi 
 
     printf "$format\n" "KMD$(checkRepo KMD ${repo[0]} ${repo[1]})" \
             "$kmdntrzd" \
@@ -122,6 +147,12 @@ outputstats ()
         esac
 
         coinstxinfo=$($coinexec listtransactions "*" $txscanamount)
+		
+		if [ -z "$coinstxinfo" ]; then
+			email_content+="${coin[0]} - is not responding !!\n"
+			continue
+		fi
+		
         coinslastntrztime=$(echo $coinstxinfo | jq -r --arg address "$coinsntraddr" '[.[] | select(.address==$address)] | sort_by(.time) | last | "\(.time)"')
         coinsntrzd=$(echo $coinstxinfo | jq --arg address "$coinsntraddr" --arg timefilter $seasonfilter '[.[] | select(.time>=($timefilter|tonumber) and .address==$address and .category=="send")] | length')
         otherutxo=$($coinexec listunspent | jq --arg amt "$coinsutxoamount" '[.[] | select(.amount==($amt|tonumber))] | length')
@@ -130,11 +161,21 @@ outputstats ()
         wallettime=$( (time $coinexec listunspent) 2>&1 >/dev/null )
         balance=$($coinexec getbalance)
         coinslasttxid=$(echo $coinstxinfo | jq -r --arg address "$coinsntraddr" '[.[] | select(.address==$address)] | sort_by(.time) | last | "\(.txid)"')
-        if (( $(bc <<< "$balance < 0.02") )); then
+        #if (( $(bc <<< "$balance < 20.02") )); then
+        if (( $(bc <<< "$balance < $email_min_balance") )); then
+			email_content+="${coin[0]} - Low Balance : $balance\n"
             balance="${color_red}$(printf "%8.3f" $balance)${color_reset}"
         else
             balance=$(printf "%8.3f" $balance)
         fi
+		
+		if (( otherutxo < email_min_utxo )); then
+			email_content+="${coin[0]} - Low UTXO : $otherutxo\n"
+		fi 
+
+		if (( $(($(date +%s)-$coinslastntrztime)) > email_max_nn )); then
+			email_content+="${coin[0]} - Last NN : $(timeSince $coinslastntrztime)\n"
+		fi 
 
         printf "$format\n" "${coin[0]}$(checkRepo ${coin[0]} ${repo[0]} ${repo[1]})" \
                 "$coinsntrzd" \
@@ -159,6 +200,12 @@ outputstats ()
 
             if [[ ! ${ignoreacs[*]} =~ ${coin[0]} ]]; then
                 info=$($komodocli -ac_name=${coin[0]} getinfo)
+				
+				if [ -z "$info" ]; then
+					email_content+="${coin[0]} - is not responding !!\n"
+					continue
+				fi
+				
                 mininginfo=$($komodocli -ac_name=${coin[0]} getmininginfo)
                 txinfo=$($komodocli -ac_name=${coin[0]} listtransactions "" $txscanamount)
                 lastntrztime=$(echo $txinfo | jq -r --arg address "$kmdntrzaddr" '[.[] | select(.address==$address)] | sort_by(.time) | last | "\(.time)"')
@@ -169,11 +216,22 @@ outputstats ()
                 wallettime=$( (time $komodocli -ac_name=${coin[0]} listunspent) 2>&1 >/dev/null )
                 balance=$(jq .balance <<< $info)
                 lasttxid=$(echo $txinfo | jq -r --arg address "$kmdntrzaddr" '[.[] | select(.address==$address)] | sort_by(.time) | last | "\(.txid)"')
-                if (( $(bc <<< "$balance < 0.02") )); then
+                #if (( $(bc <<< "$balance < 20.02") )); then
+                if (( $(bc <<< "$balance < $email_min_balance") )); then
+					email_content+="${coin[0]} - Low Balance : $balance\n"
                     balance="${color_red}$(printf "%8.3f" $balance)${color_reset}"
                 else
                     balance=$(printf "%8.3f" $balance)
                 fi
+				
+				if (( acutxo < email_min_utxo )); then
+					email_content+="${coin[0]} - Low UTXO : $acutxo\n"
+				fi 
+				
+				if (( $(($(date +%s)-$lastntrztime)) > email_max_nn )); then
+					email_content+="${coin[0]} - Last NN : $(timeSince $lastntrztime)\n"
+				fi 
+				
                 laststring=""
 
                 if [[ ${coin[0]} == ${secondlast[0]} ]]; then
@@ -209,6 +267,14 @@ outputstats ()
 if [ "$sleepytime" != "false" ]; then
     while true; do
         outputstats
+		
+		# send mail if Warning Founds !
+		if [ ! -z "$1" ] && [ ! -z "$email_content" ]; then
+			echo -e "\nEmail Content:\n$email_content"
+			( echo "to:$1" && echo "Subject:NN Monitoring" && echo "Warning : $email_content" ) | msmtp $1
+		fi
+		email_content=
+		
         sleep $sleepytime
     done
 else
